@@ -56,6 +56,12 @@ func Open(dir string) (*DB, *RecoveryInfo, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, nil, err
 	}
+	// A leftover compaction temp file is never authoritative: the rename
+	// onto kv.wal is atomic, so kv.wal always holds a complete log.
+	tmp := filepath.Join(dir, walName+compactTmpSuffix)
+	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
 	path := filepath.Join(dir, walName)
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
