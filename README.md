@@ -24,9 +24,28 @@ err = db.Batch([]kvengine.Op{
 
 value, ok, err := db.Get("user:1")
 snapshot, err := db.Snapshot()
+iterator, err := db.Range(kvengine.RangeOptions{Start: "user:", End: "user:\xff"})
+persistent, err := db.SaveSnapshot()
 ```
 
 `Snapshot()` 返回深拷贝。快照创建后，后续覆盖、删除或新批次都不会改变它；调用方修改返回的 map 或 value 也不会影响引擎。
+
+## 范围查询
+
+`Range` 使用字典序和半开区间 `[start,end)`；空 `start` 表示键空间起点，空 `end` 表示末尾。迭代器在创建时复制当时的提交视图，随后即使有批量覆盖、删除或插入相邻键，也不会在同一次遍历中混入新视图。
+
+`SaveSnapshot` 会在数据目录的 `snapshots/` 下原子发布独立快照文件。之后可以用 `OpenSnapshot(id)` 重新读取，并通过快照自己的 `Range` 遍历。日志整理和后续删除不会改写仍由该文件引用的旧值。持久快照由调用方显式管理文件生命周期；引擎不会在仍可打开快照时回收它的数据。
+
+## 日志整理
+
+`Compact` 在互斥提交锁内执行：
+
+1. 将当前全部已提交数据编码并 fsync 到临时检查点 `kv.snap.tmp`；
+2. 原子发布为 `kv.snap` 并 fsync 目录；
+3. 创建只包含检查点 ID 标记的新 `kv.wal.tmp` 并 fsync；
+4. 原子替换 `kv.wal` 并 fsync 目录。
+
+重新打开时，若检查点已发布但旧 WAL 仍在，恢复会完成 WAL 切换并只使用检查点；若新 WAL 已存在，则从匹配的检查点标记后重放批次。检查点发布后的切换错误会使当前 DB 句柄失效，要求调用方重新 `Open`，避免把新写入放进即将被替换的旧 WAL。
 
 ## 原子提交
 
@@ -57,6 +76,8 @@ snapshot, err := db.Snapshot()
 - WAL 精确截回最后完整记录；
 - 二次打开无需再恢复；
 - 完整但被篡改的记录返回 `ErrCorruptWAL`。
+
+新增测试还使用独立 `map` 模型对照覆盖、删除、空值和相邻键边界，并在检查点发布、WAL 替换前后注入中断后重开，验证遍历不会半旧半新、旧持久快照仍可读、连续压缩后数据不丢失，且未完成的快照或 WAL 切换不会发布。
 
 运行：
 
