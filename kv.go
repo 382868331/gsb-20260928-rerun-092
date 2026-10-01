@@ -62,6 +62,11 @@ func Open(dir string) (*DB, *RecoveryInfo, error) {
 	if err := os.Remove(tmp); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, nil, err
 	}
+	// Leftover snapshot temp files from interrupted publishes are never
+	// authoritative either; only fully renamed snapshot files are visible.
+	if err := discardSnapshotTemps(filepath.Join(dir, snapshotDirName)); err != nil {
+		return nil, nil, err
+	}
 	path := filepath.Join(dir, walName)
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
