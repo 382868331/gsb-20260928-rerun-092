@@ -28,6 +28,23 @@ snapshot, err := db.Snapshot()
 
 `Snapshot()` 返回深拷贝。快照创建后，后续覆盖、删除或新批次都不会改变它；调用方修改返回的 map 或 value 也不会影响引擎。
 
+## 持久快照
+
+内存快照只活在当前进程里；`SaveSnapshot(name)` 把当前已提交视图持久化到数据目录的 `snapshots/<name>.snap`，之后任何进程（不必是保存它的那个）都能使用：
+
+```go
+err = db.SaveSnapshot("before-migration")
+names, err := db.ListSnapshots()          // 已保存快照名，按序返回
+view, err := db.OpenSnapshot("before-migration") // 保存时刻的完整视图
+err = db.ReleaseSnapshot("before-migration")
+```
+
+- 快照文件是带 CRC32C 校验的单条记录。保存先写临时文件并 `fsync`，再原子地以最终文件名生效并 `fsync` 目录；发布中断只残留临时文件，不会被列出或打开，下次 `Open` 时清除，因此不会暴露半份视图。
+- 同名快照已存在时保存返回 `ErrSnapshotExists`，不会静默覆盖旧视图；先 `ReleaseSnapshot` 再保存即可替换。
+- 保存后对键的覆盖与删除仍属于原快照；`OpenSnapshot` 返回深拷贝，调用方修改不影响已保存内容。
+- `ReleaseSnapshot` 只删除该快照自身的文件；删除失败会返回错误且快照保持可用，不会误删有效数据。快照文件损坏（校验失败或截断）时 `OpenSnapshot` 返回 `ErrCorruptSnapshot`。
+- 持久快照与日志整理并存：每个快照文件独立钉住自己引用的历史，`Compact()` 只回收 WAL 中不再被任何快照引用的旧版本，绝不触碰快照文件。重开后按任意顺序读当前视图与各旧快照，结果都与各自保存时一致。
+
 ## 范围查询
 
 `Scan(start, end)` 返回 `[start, end)` 区间内按 key 排序的条目（`end` 为空表示无上限）。结果在调用开始时定格为一致视图：遍历返回切片期间发生的批量覆盖或删除不会混入，因此不会出现前半段旧值、后半段新值；修改返回的 value 也不会影响引擎。

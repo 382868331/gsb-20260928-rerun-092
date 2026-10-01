@@ -46,6 +46,7 @@ type RecoveryInfo struct {
 
 type DB struct {
 	mu     sync.RWMutex
+	dir    string
 	path   string
 	file   *os.File
 	data   map[string][]byte
@@ -85,7 +86,11 @@ func Open(dir string) (*DB, *RecoveryInfo, error) {
 		file.Close()
 		return nil, nil, err
 	}
-	db := &DB{path: path, file: file, data: make(map[string][]byte)}
+	db := &DB{dir: dir, path: path, file: file, data: make(map[string][]byte)}
+	if err := db.discardSnapshotTemps(); err != nil {
+		file.Close()
+		return nil, nil, err
+	}
 	info, err := db.recover()
 	if err != nil {
 		file.Close()
