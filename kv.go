@@ -15,6 +15,7 @@ const (
 	magic16     = uint16(0x4b56)
 	version1    = uint8(1)
 	recordBatch = uint8(1)
+	recordRestore = uint8(2)
 )
 
 var (
